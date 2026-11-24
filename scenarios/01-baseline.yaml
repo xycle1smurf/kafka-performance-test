@@ -20,7 +20,7 @@ producer:
   think-time-ms: 10                 # Pause zwischen zwei Nachrichten
   message-size: 1K                  # Bytes oder Suffix K/M
   random-message-size: false        # true: je Nachricht 1 Byte .. message-size
-  # message-file:                   # ohne message-file: zufälliger ASCII-Inhalt
+  # message-file:                   # ohne message-file: je Nachricht neuer zufälliger ASCII-Inhalt
   #   filename: ../settings/message.json
   headers:
     filename: ../settings/headers.yaml

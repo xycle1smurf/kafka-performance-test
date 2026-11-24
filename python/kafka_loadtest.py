@@ -71,6 +71,15 @@ def build_parser():
     g.add_argument("--producers", type=int, metavar="N", help="Anzahl Producer-Threads (Default 1)")
     g.add_argument("--consumers", type=int, metavar="N", help="Anzahl Consumer-Threads (Default 1)")
 
+    g = p.add_argument_group("Sicherheit (gilt für Producer und Consumer, übersteuert die Settings)")
+    g.add_argument("--sasl-username", metavar="NAME", help="SASL-Benutzer; schaltet SASL ein")
+    g.add_argument("--sasl-password", metavar="PW",
+                   help="SASL-Passwort (besser als Umgebungsvariable KLT_SASL_PASSWORD)")
+    g.add_argument("--sasl-mechanism", metavar="M", help="SCRAM-SHA-512 (Default), SCRAM-SHA-256 oder PLAIN")
+    g.add_argument("--ssl-ca-file", metavar="PEM", help="CA-Zertifikat des Brokers; schaltet TLS ein")
+    g.add_argument("--security-protocol", metavar="P",
+                   help="Default: SASL_SSL mit Benutzer, SSL nur mit CA-Datei")
+
     g = p.add_argument_group("Consumer-Verhalten")
     g.add_argument("--poll-timeout-ms", type=float, metavar="MS",
                    help="maximale Blockierzeit eines poll (Default 1000)")
@@ -231,6 +240,35 @@ def load_config(argv=None):
         raise ConfigError("Kein Topic angegeben (--topic oder 'topic:' im Scenario)")
     bootstrap = opt("bootstrap-servers")
 
+    # Sicherheits-Optionen als librdkafka-Settings. SASL-Benutzer und CA-Datei schalten SASL
+    # bzw. TLS ein; ohne ausdrückliches Protokoll wird ein Passwort nie unverschlüsselt gesendet.
+    security = {}
+    user, password = opt("sasl-username"), opt("sasl-password")
+    mechanism, protocol = opt("sasl-mechanism"), opt("security-protocol")
+    if bool(user) != bool(password):
+        raise ConfigError("--sasl-username und --sasl-password gehören zusammen")
+    if user:
+        mechanism = str(mechanism or "SCRAM-SHA-512").upper()
+        if mechanism not in ("PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"):
+            raise ConfigError(f"sasl-mechanism '{mechanism}' nicht unterstützt (SCRAM-SHA-512, SCRAM-SHA-256, PLAIN)")
+        security.update({"sasl.mechanism": mechanism, "sasl.username": str(user), "sasl.password": str(password)})
+    elif mechanism:
+        raise ConfigError("--sasl-mechanism braucht --sasl-username und --sasl-password")
+    # Datei von Kommandozeile/Umgebung relativ zum Arbeitsverzeichnis, aus dem Scenario relativ zu diesem
+    ca = None
+    if cli("ssl-ca-file"):
+        ca = (cwd / str(cli("ssl-ca-file"))).resolve()
+    elif v.get("ssl-ca-file"):
+        ca = (base_dir / str(v.get("ssl-ca-file"))).resolve()
+    if ca is not None:
+        if not ca.is_file():
+            raise ConfigError(f"ssl-ca-file nicht gefunden: {ca}")
+        security["ssl.ca.location"] = str(ca)
+    if not protocol and (user or ca is not None):
+        protocol = "SASL_SSL" if user else "SSL"
+    if protocol:
+        security["security.protocol"] = str(protocol).upper()
+
     cfg = {
         "topic": str(topic),
         # 0 heißt unbegrenzt (Daemon-Betrieb, übersteuert Werte aus dem Scenario)
@@ -247,6 +285,7 @@ def load_config(argv=None):
         settings, mpr = translate_settings(read_mapping(section.get("settings"), base_dir, f"{role}.settings"), role)
         if bootstrap:
             settings["bootstrap.servers"] = str(bootstrap)
+        settings.update(security)
         if "bootstrap.servers" not in settings:
             raise ConfigError(f"{role}: bootstrap.servers fehlt (Settings oder --bootstrap-servers)")
         return settings, mpr
@@ -265,6 +304,8 @@ def load_config(argv=None):
             "instances": max(1, int(producer.get("instances", 1))),
             "think_time": float(producer.get("think-time-ms", 0)) / 1000.0,
             "payload": make_payload_buffer(base, size),
+            # ohne message-file wird jede Nachricht einzeln zufällig erzeugt
+            "random_content": base is None,
             "random_size": bool(producer.get("random-message-size", False)),
             "headers": [(str(k), str(val).encode("utf-8")) for k, val in headers.items()],
         }
@@ -287,15 +328,22 @@ def load_config(argv=None):
 
 
 def make_payload_buffer(base, size):
-    """Puffer in Maximalgröße; jede Nachricht ist ein Präfix davon.
-    Ohne Datei: zufällige ASCII-Zeichen (schlecht komprimierbar, also Worst Case).
-    Mit Datei: Dateiinhalt, bei --message-size wiederholt bzw. abgeschnitten."""
+    """Puffer in Maximalgröße.
+    Mit Datei: Dateiinhalt, bei --message-size wiederholt bzw. abgeschnitten;
+    jede Nachricht ist ein Präfix davon.
+    Ohne Datei legt der Puffer nur die Maximalgröße fest; der Inhalt wird je
+    Nachricht mit random_payload() neu erzeugt."""
     if base is None:
-        size = size or 1024
-        return base64.b64encode(os.urandom(size * 3 // 4 + 3))[:size]
+        return random_payload(size or 1024)
     if size is None:
         return base
     return (base * (size // len(base) + 1))[:size]
+
+
+def random_payload(size):
+    """Zufällige ASCII-Zeichen (Base64): je Nachricht anders und schlecht
+    komprimierbar, damit die Kompression nicht von Wiederholungen profitiert."""
+    return base64.b64encode(os.urandom(size * 3 // 4 + 3))[:size]
 
 
 # --------------------------------------------------------------------------
@@ -399,6 +447,7 @@ def run_producer(name, cfg, stats, stop, deadline):
     pc = cfg["producer"]
     topic, payload, headers = cfg["topic"], pc["payload"], pc["headers"] or None
     max_size, random_size, think = len(payload), pc["random_size"], pc["think_time"]
+    random_content = pc["random_content"]
     try:
         producer = Producer(dict(pc["settings"], error_cb=kafka_error_cb(name)), logger=log)
     except KafkaException as e:
@@ -420,7 +469,11 @@ def run_producer(name, cfg, stats, stop, deadline):
         while not stop.is_set() and (deadline is None or time.monotonic() < deadline):
             if not stats.reserve():
                 break
-            value = payload[:random.randint(1, max_size)] if random_size else payload
+            size = random.randint(1, max_size) if random_size else max_size
+            if random_content:
+                value = random_payload(size)
+            else:
+                value = payload if size == max_size else payload[:size]
             while not stop.is_set():
                 try:
                     producer.produce(topic, value=value, headers=headers, on_delivery=on_delivery)

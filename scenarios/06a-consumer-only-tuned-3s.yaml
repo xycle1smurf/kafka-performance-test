@@ -1,0 +1,21 @@
+# Nur Consumer (kein producer-Abschnitt): liest mit, was ein anderer Producer
+# schreibt, z. B. der echte Service. Poll-Verhalten wie ein träger Listener.
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+duration: 10m
+
+consumer:
+  instances: 1
+  poll-timeout-ms: 1000
+  poll-interval-ms: 0            # 2 s Pause zwischen den polls
+  process-time-ms: 0
+  settings:
+    content: |                      # Settings als Pipe-Block
+      group.id: loadtest-consumer-only
+      auto.offset.reset: earliest
+      max.poll.records: 5000
+      max.poll.interval.ms: 300000
+      session.timeout.ms: 45000
+      fetch.min.bytes: 65536
+      fetch.max.wait.ms: 500

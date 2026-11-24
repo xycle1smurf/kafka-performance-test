@@ -1,0 +1,26 @@
+# Nur Producer, maximaler Durchsatz: keine Wartezeit zwischen den Nachrichten,
+# größere Batches und mehr Puffer als 07-producer-only. Zeigt, was Broker und
+# Netzstrecke hergeben, wenn der Producer nicht selbst bremst.
+# acks: all bleibt, weil der Cluster damit (min.insync.replicas 2) produktiv läuft.
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+duration: 2m
+
+producer:
+  instances: 4
+  think-time-ms: 0                  # keine künstliche Pause
+  message-size: 4K
+  message-file:
+    filename: ../settings/message.json
+  headers:
+    content-type: application/json
+    scenario: producer-only-max
+  settings:
+    content: |
+      acks: all
+      linger.ms: 20                 # bis 20 ms auf mehr Nachrichten für den Batch warten
+      batch.size: 262144            # 256 KB je Partition und Batch (Default 16 KB)
+      compression.type: lz4
+      buffer.memory: 134217728      # 128 MB; ist er voll, blockiert send() bis max.block.ms
+      max.in.flight.requests.per.connection: 5

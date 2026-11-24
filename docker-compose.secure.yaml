@@ -1,0 +1,160 @@
+# Zusatz zu docker-compose.yaml: der ganze Test über SASL und TLS.
+#
+# Einschalten in .env (Vorlage: .env.example); danach gelten alle Aufrufe wie gewohnt:
+#   COMPOSE_FILE=docker-compose.yaml,docker-compose.secure.yaml
+#   COMPOSE_PATH_SEPARATOR=,
+#   KLT_SASL_PASSWORD=<geheim>
+# oder je Aufruf:
+#   docker compose -f docker-compose.yaml -f docker-compose.secure.yaml --profile all up -d
+#
+# Was dazukommt:
+#   - je Broker n ein Listener SASL_SSL auf n9095 (Clients) und auf 127.0.0.1:n9096 (Docker-Host),
+#     Mechanismen SCRAM-SHA-512 und PLAIN
+#   - Benutzer und Passwort aus .env: KLT_SASL_USERNAME (Default loadtest), KLT_SASL_PASSWORD
+#   - Dienst certs: erzeugt einmalig eine CA und das Broker-Zertifikat nach ./certs
+#   - Dienst sasl-user: legt den SCRAM-Benutzer im Cluster an (bei jedem Start, idempotent)
+#   - die drei Clients verbinden sich über n9095 mit SASL_SSL und prüfen gegen ./certs/ca/ca.pem
+#
+# Unverändert unverschlüsselt bleiben Inter-Broker- und Controller-Verkehr sowie die bisherigen
+# Listener n9092 und n9094 (auch für die Web-UIs): weiterhin nur für Testnetze.
+
+x-secure-broker-env: &secure-broker-env
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT,SECURE:SASL_SSL,SECUREHOST:SASL_SSL
+  KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512,PLAIN
+  KAFKA_SSL_KEYSTORE_TYPE: PEM
+  KAFKA_SSL_KEYSTORE_LOCATION: /certs/broker.pem
+  # PLAIN prüft der Broker direkt gegen das Passwort aus .env, SCRAM gegen den von sasl-user
+  # angelegten Benutzer. Das Passwort darf kein doppeltes Anführungszeichen enthalten.
+  KAFKA_LISTENER_NAME_SECURE_PLAIN_SASL_JAAS_CONFIG: &jaas-plain >-
+    org.apache.kafka.common.security.plain.PlainLoginModule required
+    user_${KLT_SASL_USERNAME:-loadtest}="${KLT_SASL_PASSWORD:?KLT_SASL_PASSWORD in .env setzen}";
+  KAFKA_LISTENER_NAME_SECUREHOST_PLAIN_SASL_JAAS_CONFIG: *jaas-plain
+  KAFKA_LISTENER_NAME_SECURE_SCRAM___SHA___512_SASL_JAAS_CONFIG: &jaas-scram org.apache.kafka.common.security.scram.ScramLoginModule required;
+  KAFKA_LISTENER_NAME_SECUREHOST_SCRAM___SHA___512_SASL_JAAS_CONFIG: *jaas-scram
+
+x-secure-client-env: &secure-client-env
+  KLT_BOOTSTRAP_SERVERS: ${KLT_BOOTSTRAP_SERVERS:-${BROKER1_HOST:-broker-1}:19095,${BROKER2_HOST:-broker-2}:29095,${BROKER3_HOST:-broker-3}:39095}
+  KLT_SECURITY_PROTOCOL: SASL_SSL
+  KLT_SASL_MECHANISM: ${KLT_SASL_MECHANISM:-SCRAM-SHA-512}
+  KLT_SASL_USERNAME: ${KLT_SASL_USERNAME:-loadtest}
+  KLT_SASL_PASSWORD: ${KLT_SASL_PASSWORD:?KLT_SASL_PASSWORD in .env setzen}
+  KLT_SSL_CA_FILE: /work/certs/ca.pem
+
+services:
+
+  # Erzeugt einmalig ./certs/ca/ca.pem (CA, für die Clients) und ./certs/broker/broker.pem
+  # (Schlüssel und Zertifikat für alle Broker). Vorhandene Dateien bleiben unangetastet:
+  # im verteilten Betrieb ./certs von einem Rechner auf die anderen kopieren.
+  # Nach Änderung von BROKERn_HOST ./certs löschen, damit die Namen im Zertifikat stimmen.
+  certs:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.1}
+    profiles: [kafka, broker-1, broker-2, broker-3, all]
+    user: "0:0"
+    restart: "no"
+    working_dir: /certs
+    volumes:
+      - ./certs:/certs
+    environment:
+      BROKER_HOSTS: ${BROKER1_HOST:-} ${BROKER2_HOST:-} ${BROKER3_HOST:-}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ -s ca/ca.pem ] && [ -s broker/broker.pem ]; then
+          echo "Zertifikate vorhanden, nichts zu tun"; exit 0
+        fi
+        san="DNS:localhost,IP:127.0.0.1,DNS:broker-1,DNS:broker-2,DNS:broker-3"
+        for h in $$BROKER_HOSTS; do
+          case "$$h" in
+            *[!0-9.]*) san="$$san,DNS:$$h" ;;
+            *)         san="$$san,IP:$$h" ;;
+          esac
+        done
+        mkdir -p ca broker tmp
+        openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=kafka-loadtest-ca" \
+          -keyout tmp/ca.key -out ca/ca.pem
+        openssl req -newkey rsa:2048 -nodes -subj "/CN=kafka-loadtest-broker" \
+          -keyout tmp/broker.key -out tmp/broker.csr
+        printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "$$san" > tmp/broker.ext
+        openssl x509 -req -in tmp/broker.csr -CA ca/ca.pem -CAkey tmp/ca.key -CAcreateserial \
+          -days 3650 -extfile tmp/broker.ext -out tmp/broker.crt
+        cat tmp/broker.key tmp/broker.crt ca/ca.pem > broker/broker.pem
+        chmod 644 ca/ca.pem broker/broker.pem
+        rm -rf tmp ca/ca.srl
+        echo "Zertifikate erzeugt für: $$san"
+
+  # Legt den SCRAM-Benutzer an bzw. setzt sein Passwort neu. Läuft über den internen
+  # Listener und wiederholt sich, bis der Cluster arbeitsfähig ist.
+  sasl-user:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.1}
+    profiles: [kafka, broker-1, broker-2, broker-3, all]
+    restart: on-failure
+    environment:
+      BOOTSTRAP: ${BROKER1_HOST:-broker-1}:19092,${BROKER2_HOST:-broker-2}:29092,${BROKER3_HOST:-broker-3}:39092
+      SASL_USERNAME: ${KLT_SASL_USERNAME:-loadtest}
+      SASL_PASSWORD: ${KLT_SASL_PASSWORD:?KLT_SASL_PASSWORD in .env setzen}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server "$$BOOTSTRAP" --alter \
+          --entity-type users --entity-name "$$SASL_USERNAME" \
+          --add-config "SCRAM-SHA-512=[password=$$SASL_PASSWORD]"
+
+  broker-1:
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    ports:
+      - "19095:19095"
+      - "127.0.0.1:19096:19096"
+    environment:
+      <<: *secure-broker-env
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:19093,HOST://:19094,SECURE://:19095,SECUREHOST://:19096
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER1_HOST:-broker-1}:19092,HOST://127.0.0.1:19094,SECURE://${BROKER1_HOST:-broker-1}:19095,SECUREHOST://127.0.0.1:19096
+    volumes:
+      - ./certs/broker:/certs:ro
+
+  broker-2:
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    ports:
+      - "29095:29095"
+      - "127.0.0.1:29096:29096"
+    environment:
+      <<: *secure-broker-env
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093,HOST://:29094,SECURE://:29095,SECUREHOST://:29096
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER2_HOST:-broker-2}:29092,HOST://127.0.0.1:29094,SECURE://${BROKER2_HOST:-broker-2}:29095,SECUREHOST://127.0.0.1:29096
+    volumes:
+      - ./certs/broker:/certs:ro
+
+  broker-3:
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    ports:
+      - "39095:39095"
+      - "127.0.0.1:39096:39096"
+    environment:
+      <<: *secure-broker-env
+      KAFKA_LISTENERS: PLAINTEXT://:39092,CONTROLLER://:39093,HOST://:39094,SECURE://:39095,SECUREHOST://:39096
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER3_HOST:-broker-3}:39092,HOST://127.0.0.1:39094,SECURE://${BROKER3_HOST:-broker-3}:39095,SECUREHOST://127.0.0.1:39096
+    volumes:
+      - ./certs/broker:/certs:ro
+
+  python:
+    environment:
+      <<: *secure-client-env
+    volumes:
+      - ./certs/ca:/work/certs:ro
+
+  spring:
+    environment:
+      <<: *secure-client-env
+    volumes:
+      - ./certs/ca:/work/certs:ro
+
+  quarkus:
+    environment:
+      <<: *secure-client-env
+    volumes:
+      - ./certs/ca:/work/certs:ro

@@ -31,6 +31,12 @@ public final class Options {
               --group-id ID              übersteuert group.id in den Consumer-Settings
               --producers N              Anzahl Producer-Threads (Default 1)
               --consumers N              Anzahl Consumer-Threads (Default 1)
+            Sicherheit (gilt für Producer und Consumer, übersteuert die Settings):
+              --sasl-username NAME       SASL-Benutzer; schaltet SASL ein
+              --sasl-password PW         SASL-Passwort (besser als Umgebungsvariable KLT_SASL_PASSWORD)
+              --sasl-mechanism M         SCRAM-SHA-512 (Default), SCRAM-SHA-256 oder PLAIN
+              --ssl-ca-file PEM          CA-Zertifikat des Brokers; schaltet TLS ein
+              --security-protocol P      Default: SASL_SSL mit Benutzer, SSL nur mit CA-Datei
             Consumer-Verhalten:
               --poll-timeout-ms MS       maximale Blockierzeit eines poll (Default 1000)
               --poll-interval-ms MS      Pause zwischen zwei polls (Default 0)
@@ -50,7 +56,8 @@ public final class Options {
     private static final List<String> NAMES = List.of(
             "scenario", "message-file", "message-size", "random-message-size", "think-time-ms", "headers",
             "producer-settings", "consumer-settings", "bootstrap-servers", "topic", "group-id", "producers",
-            "consumers", "poll-timeout-ms", "poll-interval-ms", "process-time-ms", "duration", "count",
+            "consumers", "sasl-username", "sasl-password", "sasl-mechanism", "ssl-ca-file", "security-protocol",
+            "poll-timeout-ms", "poll-interval-ms", "process-time-ms", "duration", "count",
             "report-interval", "verbose", "help");
 
     private final Map<String, String> cli = new HashMap<>();

@@ -24,6 +24,8 @@ Dateioptionen) als Schlüssel im Scenario. Vorrang: Kommandozeile, Umgebung, Sce
 --producer-settings YAML   --consumer-settings YAML
 --bootstrap-servers H:P    --topic TOPIC              --group-id ID
 --producers N              --consumers N
+--sasl-username NAME       --sasl-password PW         --sasl-mechanism M
+--ssl-ca-file PEM          --security-protocol P
 --poll-timeout-ms MS       --poll-interval-ms MS      --process-time-ms MS
 --duration ZEIT            --count N                  (0 = unbegrenzt)
 --report-interval S        --verbose
@@ -93,3 +95,59 @@ Die Images der Java-Varianten müssen auf dem Zielrechner vorhanden sein: entwed
 Registry (`KLT_SPRING_IMAGE`, `KLT_QUARKUS_IMAGE`) oder mit `docker save` und `docker load`.
 
 Die Listener sind unverschlüsselt und ohne Anmeldung, also nur für Testnetze geeignet.
+
+### SASL und TLS
+
+`docker-compose.secure.yaml` schaltet den ganzen Test auf SASL_SSL um. In `.env` eintragen
+(`.env` steht in `.gitignore`, das Passwort gehört nur dorthin):
+
+```
+COMPOSE_FILE=docker-compose.yaml,docker-compose.secure.yaml
+COMPOSE_PATH_SEPARATOR=,
+KLT_SASL_PASSWORD=<geheim>
+```
+
+Danach gelten alle Aufrufe wie oben. Fehlt das Passwort, bricht Compose mit einem Hinweis ab.
+
+- Jeder Broker n bekommt zusätzlich die Listener `n9095` (Clients) und `127.0.0.1:n9096`
+  (Werkzeuge auf dem Docker-Host), beide SASL_SSL mit SCRAM-SHA-512 und PLAIN.
+- Der Dienst `certs` erzeugt beim ersten Start eine CA und das Broker-Zertifikat nach `./certs`
+  (ebenfalls in `.gitignore`). Der Dienst `sasl-user` legt den Benutzer `KLT_SASL_USERNAME`
+  (Default `loadtest`) mit dem Passwort aus `.env` an.
+- Die drei Clients verbinden sich über `n9095` und prüfen den Broker gegen `./certs/ca/ca.pem`.
+  Mechanismus: `KLT_SASL_MECHANISM` (Default `SCRAM-SHA-512`, alternativ `PLAIN`).
+
+Verteilt: `.env` und `./certs` vom ersten Broker-Rechner auf alle anderen kopieren (Clients
+brauchen nur `./certs/ca`), zusätzlich Port `n9095` freigeben. Wer `BROKERn_HOST` nachträglich
+ändert, löscht `./certs`, damit die Namen im Zertifikat wieder stimmen.
+
+Direkt gestartet, zum Beispiel vom Docker-Host aus:
+
+```
+$env:KLT_SASL_PASSWORD = '<geheim>'
+java -jar spring-boot\target\kafka-loadtest-spring-1.0.0.jar --scenario scenarios\01-baseline.yaml --bootstrap-servers 127.0.0.1:19096 --sasl-username loadtest --ssl-ca-file certs\ca\ca.pem
+```
+
+`--sasl-username` schaltet SASL ein, `--ssl-ca-file` TLS mit eigener CA. Ohne
+`--security-protocol` gilt mit Benutzer `SASL_SSL` und nur mit CA-Datei `SSL`; ohne CA-Datei
+prüft der Client gegen die CAs des Systems. Die Optionen übersteuern die Settings im Scenario.
+
+Inter-Broker- und Controller-Verkehr sowie die Listener `n9092` und `n9094` (auch für die
+Web-UIs) bleiben unverschlüsselt und ohne Anmeldung: weiterhin nur für Testnetze.
+
+### Auswahl von Szenarien pro Run
+
+Startet alle Broker lokal und einen Spring Container mit dem im scenarios Ordner stehenden Parametern.
+Die Parameterdateien sind ebenso 1:1 für die anderen Codebases gültig.
+
+```
+$env:KLT_SPRING_SCENARIO = '04-large-messages-small-fetch.yaml'; docker compose --profile kafka --profile spring up
+```
+
+Ohne -d kommen die Logs direkt auf der aufrufenden Konsole. In diesem Fall sollte man das kafka Profil vorher starten mit -d und die Broker logs in Docker Desktop anschauen.
+
+## Auswertungen 
+
+Mit `docker stats`die Last messen und beobachten.
+
+

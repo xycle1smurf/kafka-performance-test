@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.SecureRandom;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -34,7 +34,7 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
                              ConsumerPart consumer) {
 
     public record ProducerPart(Map<String, Object> settings, int instances, double thinkTimeMs, byte[] payload,
-                               boolean randomSize, List<Header> headers) {
+                               boolean randomContent, boolean randomSize, List<Header> headers) {
     }
 
     public record ConsumerPart(Map<String, Object> settings, int instances, double pollTimeoutMs,
@@ -126,6 +126,7 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
             throw new ConfigException("Kein Topic angegeben (--topic oder 'topic:' im Scenario)");
         }
         String bootstrap = top(o, scenario, "bootstrap-servers");
+        Map<String, Object> security = securitySettings(o, scenario, cwd, baseDir);
         String duration = top(o, scenario, "duration");
         String count = top(o, scenario, "count");
         // 0 heißt unbegrenzt (Daemon-Betrieb, übersteuert Werte aus dem Scenario)
@@ -134,7 +135,7 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
 
         ProducerPart producerPart = null;
         if (producer != null) {
-            Map<String, Object> settings = clientSettings(producer, baseDir, bootstrap, true);
+            Map<String, Object> settings = clientSettings(producer, baseDir, bootstrap, security, true);
             settings.put("key.serializer", BYTES_SERIALIZER);
             settings.put("value.serializer", BYTES_SERIALIZER);
             byte[] base = null;
@@ -152,13 +153,14 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
                     Math.max(1, (int) number(producer.getOrDefault("instances", 1), "producer.instances")),
                     number(producer.getOrDefault("think-time-ms", 0), "think-time-ms"),
                     payloadBuffer(base, size),
+                    base == null,
                     bool(producer.get("random-message-size")),
                     List.copyOf(headers));
         }
 
         ConsumerPart consumerPart = null;
         if (consumer != null) {
-            Map<String, Object> settings = clientSettings(consumer, baseDir, bootstrap, false);
+            Map<String, Object> settings = clientSettings(consumer, baseDir, bootstrap, security, false);
             settings.put("key.deserializer", BYTES_DESERIALIZER);
             settings.put("value.deserializer", BYTES_DESERIALIZER);
             if (o.get("group-id") != null) {
@@ -207,14 +209,75 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
         return source;
     }
 
+    /**
+     * Sicherheits-Optionen als Settings des Java-Clients. SASL-Benutzer und CA-Datei schalten
+     * SASL bzw. TLS ein; ohne ausdrückliches Protokoll wird ein Passwort nie unverschlüsselt gesendet.
+     */
+    private static Map<String, Object> securitySettings(Options o, Map<String, Object> scenario, Path cwd,
+                                                        Path baseDir) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String user = top(o, scenario, "sasl-username");
+        String password = top(o, scenario, "sasl-password");
+        String mechanism = top(o, scenario, "sasl-mechanism");
+        String protocol = top(o, scenario, "security-protocol");
+        // Datei von Kommandozeile/Umgebung relativ zum Arbeitsverzeichnis, aus dem Scenario relativ zu diesem
+        Path ca = null;
+        if (o.get("ssl-ca-file") != null) {
+            ca = cwd.resolve(o.get("ssl-ca-file"));
+        } else if (scenario.get("ssl-ca-file") != null) {
+            ca = baseDir.resolve(String.valueOf(scenario.get("ssl-ca-file")));
+        }
+        if ((user == null) != (password == null)) {
+            throw new ConfigException("--sasl-username und --sasl-password gehören zusammen");
+        }
+        if (user != null) {
+            mechanism = mechanism == null ? "SCRAM-SHA-512" : mechanism.toUpperCase(Locale.ROOT);
+            String module;
+            if (mechanism.equals("PLAIN")) {
+                module = "org.apache.kafka.common.security.plain.PlainLoginModule";
+            } else if (mechanism.equals("SCRAM-SHA-256") || mechanism.equals("SCRAM-SHA-512")) {
+                module = "org.apache.kafka.common.security.scram.ScramLoginModule";
+            } else {
+                throw new ConfigException("sasl-mechanism '" + mechanism
+                        + "' nicht unterstützt (SCRAM-SHA-512, SCRAM-SHA-256, PLAIN)");
+            }
+            out.put("sasl.mechanism", mechanism);
+            out.put("sasl.jaas.config", module + " required username=\"" + jaasEscape(user) + "\" password=\""
+                    + jaasEscape(password) + "\";");
+        } else if (mechanism != null) {
+            throw new ConfigException("--sasl-mechanism braucht --sasl-username und --sasl-password");
+        }
+        if (ca != null) {
+            if (!Files.isRegularFile(ca)) {
+                throw new ConfigException("ssl-ca-file nicht gefunden: " + ca);
+            }
+            out.put("ssl.truststore.type", "PEM");
+            out.put("ssl.truststore.location", ca.toString());
+        }
+        if (protocol == null && user != null) {
+            protocol = "SASL_SSL";
+        } else if (protocol == null && ca != null) {
+            protocol = "SSL";
+        }
+        if (protocol != null) {
+            out.put("security.protocol", protocol.toUpperCase(Locale.ROOT));
+        }
+        return out;
+    }
+
+    private static String jaasEscape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     private static Map<String, Object> clientSettings(Map<String, Object> section, Path baseDir, String bootstrap,
-                                                      boolean producer) {
+                                                      Map<String, Object> security, boolean producer) {
         String role = producer ? "producer" : "consumer";
         Map<String, Object> settings = translate(readMapping(section.get("settings"), baseDir, role + ".settings"),
                 producer);
         if (bootstrap != null) {
             settings.put("bootstrap.servers", bootstrap);
         }
+        settings.putAll(security);
         if (!settings.containsKey("bootstrap.servers")) {
             throw new ConfigException(role + ": bootstrap.servers fehlt (Settings oder --bootstrap-servers)");
         }
@@ -360,18 +423,15 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
     }
 
     /**
-     * Puffer in Maximalgröße; jede Nachricht ist ein Präfix davon.
-     * Ohne Datei: zufällige ASCII-Zeichen (schlecht komprimierbar, also Worst Case).
-     * Mit Datei: Dateiinhalt, bei message-size wiederholt bzw. abgeschnitten.
+     * Puffer in Maximalgröße.
+     * Mit Datei: Dateiinhalt, bei message-size wiederholt bzw. abgeschnitten;
+     * jede Nachricht ist ein Präfix davon.
+     * Ohne Datei legt der Puffer nur die Maximalgröße fest; der Inhalt wird je
+     * Nachricht mit {@link #randomPayload(int)} neu erzeugt.
      */
     static byte[] payloadBuffer(byte[] base, Integer size) {
         if (base == null) {
-            int n = size == null ? 1024 : size;
-            byte[] random = new byte[n * 3 / 4 + 3];
-            new SecureRandom().nextBytes(random);
-            byte[] out = new byte[n];
-            System.arraycopy(Base64.getEncoder().encode(random), 0, out, 0, n);
-            return out;
+            return randomPayload(size == null ? 1024 : size);
         }
         if (size == null) {
             return base;
@@ -380,6 +440,18 @@ public record LoadTestConfig(String topic, Double durationSeconds, Long count, d
         for (int i = 0; i < size; i++) {
             out[i] = base[i % base.length];
         }
+        return out;
+    }
+
+    /**
+     * Zufällige ASCII-Zeichen (Base64): je Nachricht anders und schlecht komprimierbar,
+     * damit die Kompression nicht von Wiederholungen profitiert.
+     */
+    static byte[] randomPayload(int size) {
+        byte[] random = new byte[size * 3 / 4 + 3];
+        ThreadLocalRandom.current().nextBytes(random);
+        byte[] out = new byte[size];
+        System.arraycopy(Base64.getEncoder().encode(random), 0, out, 0, size);
         return out;
     }
 }

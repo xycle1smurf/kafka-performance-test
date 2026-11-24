@@ -3,6 +3,7 @@
 #
 #   Kafka:    kafka (alle drei Broker) | broker-1 | broker-2 | broker-3
 #   Clients:  clients (alle drei)      | python   | spring   | quarkus
+#   UIs:      ui (beide)               | akhq     | redpanda-console
 #   Alles:    all
 #
 # Alles auf einem Rechner:
@@ -15,6 +16,7 @@
 # Ports je Broker n (1..3):  n9092 Clients und Inter-Broker, n9093 Controller-Quorum,
 #                            n9094 nur lokal für Werkzeuge auf dem Docker-Host (127.0.0.1:n9094)
 # Die Listener sind unverschlüsselt (PLAINTEXT): nur für Testnetze gedacht.
+# SASL und TLS für den ganzen Test: siehe docker-compose.secure.yaml.
 
 name: kafka-loadtest
 
@@ -105,6 +107,33 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER3_HOST:-broker-3}:39092,HOST://127.0.0.1:39094
     volumes:
       - broker-3-data:/var/lib/kafka/data
+
+  # Web-UIs zum Ansehen von Brokern, Topics und Consumer-Groups; nur lokal erreichbar,
+  # da ohne Authentifizierung.
+  # AKHQ (ehemals KafkaHQ): http://localhost:8080
+  akhq:
+    image: ${AKHQ_IMAGE:-tchiotludo/akhq:0.25.1}
+    profiles: [ui, akhq, all]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8780:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            kafka-loadtest:
+              properties:
+                bootstrap.servers: "${KLT_BOOTSTRAP_SERVERS:-${BROKER1_HOST:-broker-1}:19092,${BROKER2_HOST:-broker-2}:29092,${BROKER3_HOST:-broker-3}:39092}"
+
+  # Redpanda Console: http://localhost:8081
+  redpanda-console:
+    image: ${REDPANDA_CONSOLE_IMAGE:-docker.redpanda.com/redpandadata/console:v2.8.0}
+    profiles: [ui, redpanda-console, all]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8781:8080"
+    environment:
+      KAFKA_BROKERS: ${KLT_BOOTSTRAP_SERVERS:-${BROKER1_HOST:-broker-1}:19092,${BROKER2_HOST:-broker-2}:29092,${BROKER3_HOST:-broker-3}:39092}
 
   # Python-Variante (confluent-kafka / librdkafka); das Image wird hier gebaut.
   python:

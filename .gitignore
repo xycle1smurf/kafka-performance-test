@@ -6,8 +6,11 @@ __pycache__/
 # Maven
 target/
 
-# Lokale Compose-Konfiguration
+# Lokale Compose-Konfiguration, enthält das SASL-Passwort
 .env
+
+# Erzeugte TLS-Zertifikate und Schlüssel (docker-compose.secure.yaml)
+certs/
 
 # IDE
 .idea/

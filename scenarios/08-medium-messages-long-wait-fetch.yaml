@@ -1,0 +1,34 @@
+# Große, unterschiedlich große Nachrichten bei knappen Fetch-Größen.
+# Zeigt, wie sich kleine fetch.max.bytes / max.partition.fetch.bytes auf
+# Durchsatz und End-to-End-Latenz auswirken (viele kleine Fetch-Requests).
+# Der Topic bzw. Broker muss Nachrichten bis 512 KB zulassen (max.message.bytes).
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+count: 20000
+
+producer:
+  think-time-ms: 2
+  message-size: 16K
+  random-message-size: true         # 1 Byte .. 512 KB
+  headers:
+    content: |                      # Header als Pipe-Block
+      content-type: application/octet-stream
+      scenario: large-messages
+  settings:
+    acks: all
+    linger.ms: 20
+    compression.type: none
+    message.max.bytes: 1000000
+
+consumer:
+  poll-timeout-ms: 5000
+  poll-interval-ms: 100             # 100 ms Pause zwischen den polls
+  settings:
+    group.id: loadtest-small-fetch
+    max.poll.records: 1000
+    message.max.bytes: 600000       # Untergrenze für fetch.max.bytes
+    fetch.max.bytes: 600000
+    max.partition.fetch.bytes: 600000
+    fetch.min.bytes: 100
+    fetch.max.wait.ms: 3000

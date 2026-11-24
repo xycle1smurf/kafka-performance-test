@@ -208,9 +208,16 @@ public final class LoadTest {
         }
         try (sender) {
             while (!stop.get() && System.nanoTime() < deadline && stats.reserve()) {
-                byte[] value = pc.randomSize()
-                        ? Arrays.copyOf(payload, ThreadLocalRandom.current().nextInt(1, payload.length + 1))
-                        : payload;
+                int size = pc.randomSize()
+                        ? ThreadLocalRandom.current().nextInt(1, payload.length + 1)
+                        : payload.length;
+                byte[] value;
+                if (pc.randomContent()) {
+                    // ohne message-file: jede Nachricht einzeln zufällig
+                    value = LoadTestConfig.randomPayload(size);
+                } else {
+                    value = size == payload.length ? payload : Arrays.copyOf(payload, size);
+                }
                 try {
                     sender.send(value);
                     stats.sent();
