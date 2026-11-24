@@ -1,0 +1,8 @@
+# Kafka-Producer-Settings (librdkafka-Namen, weitgehend identisch zum Java-Client)
+bootstrap.servers: localhost:9092
+acks: all
+enable.idempotence: true
+linger.ms: 5
+compression.type: lz4
+delivery.timeout.ms: 120000
+request.timeout.ms: 30000

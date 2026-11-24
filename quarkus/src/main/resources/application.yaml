@@ -1,0 +1,34 @@
+quarkus:
+  banner:
+    enabled: false
+
+  kafka:
+    devservices:
+      enabled: false
+    # Snappy braucht im Native Image eine eigene Bibliothek; lz4 und gzip gehen ohne Zutun
+    snappy:
+      enabled: true
+
+  log:
+    level: WARN
+    console:
+      format: "%d{HH:mm:ss} %-5p %s%e%n"
+    category:
+      "kafka-loadtest":
+        level: INFO
+      # Gruppen-Koordination sichtbar lassen: hier steht der Grund jedes Rejoins
+      "org.apache.kafka.clients.consumer.internals":
+        level: INFO
+      "org.apache.kafka.clients.consumer.internals.SubscriptionState":
+        level: WARN
+      "org.apache.kafka.clients.consumer.internals.ConsumerUtils":
+        level: WARN
+
+  # Image: kafka-loadtest-quarkus im lokalen Docker-Daemon (ohne Benutzer-Präfix);
+  # der Tag steht in der pom.xml (latest, im Profil jvm-image: jvm)
+  container-image:
+    group: ""
+    name: kafka-loadtest-quarkus
+
+  jib:
+    working-directory: /work

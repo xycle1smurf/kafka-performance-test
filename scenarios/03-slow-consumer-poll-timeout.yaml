@@ -1,0 +1,27 @@
+# Provoziert Rejoins durch zu langsame Verarbeitung:
+# 50 Nachrichten je poll x 300 ms = 15 s zwischen zwei polls, erlaubt sind 10 s.
+# Erwartet: "REBALANCE lost" bzw. wiederholte "REBALANCE assign"-Zeilen und im
+# Broker-Log "consumer poll timeout has expired".
+# Gegenprobe: max.poll.records auf 20 senken oder max.poll.interval.ms auf 30000 erhöhen.
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+duration: 3m
+
+producer:
+  think-time-ms: 20
+  message-size: 512
+  settings:
+    acks: all
+    linger.ms: 5
+
+consumer:
+  instances: 2
+  poll-timeout-ms: 1000
+  process-time-ms: 300
+  settings:
+    group.id: loadtest-slow-consumer
+    max.poll.records: 50
+    max.poll.interval.ms: 10000
+    session.timeout.ms: 6000        # muss <= max.poll.interval.ms sein
+    heartbeat.interval.ms: 2000

@@ -1,0 +1,31 @@
+# Maximaler Durchsatz: große Producer-Batches, Kompression, große Fetches.
+# Vergleichswert dafür, was Broker und Netzstrecke überhaupt hergeben.
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+duration: 2m
+
+producer:
+  instances: 2
+  think-time-ms: 0
+  message-size: 2K
+  settings:                         # Settings direkt als Mapping
+    acks: 1
+    linger.ms: 50
+    batch.size: 1048576
+    batch.num.messages: 10000
+    compression.type: lz4
+    queue.buffering.max.messages: 500000
+    queue.buffering.max.kbytes: 1048576
+
+consumer:
+  instances: 2
+  poll-timeout-ms: 1000
+  settings:
+    group.id: loadtest-throughput
+    max.poll.records: 2000
+    fetch.min.bytes: 1048576        # Broker sammelt bis 1 MB ...
+    fetch.max.wait.ms: 500          # ... oder höchstens 500 ms
+    fetch.max.bytes: 52428800
+    max.partition.fetch.bytes: 10485760
+    queued.max.messages.kbytes: 262144

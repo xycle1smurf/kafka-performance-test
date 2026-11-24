@@ -1,0 +1,146 @@
+# Kafka-Lasttest: 3-Broker-Cluster (KRaft) und die drei Lasttest-Varianten als Daemons.
+# Alles ist über Profile schaltbar:
+#
+#   Kafka:    kafka (alle drei Broker) | broker-1 | broker-2 | broker-3
+#   Clients:  clients (alle drei)      | python   | spring   | quarkus
+#   Alles:    all
+#
+# Alles auf einem Rechner:
+#   docker compose --profile all up -d
+# Verteilt (auf jedem Rechner dieselbe .env mit BROKER1_HOST..BROKER3_HOST):
+#   Rechner A:  docker compose --profile broker-1 up -d
+#   Rechner B:  docker compose --profile broker-2 up -d
+#   Rechner C:  docker compose --profile broker-3 --profile spring up -d
+#
+# Ports je Broker n (1..3):  n9092 Clients und Inter-Broker, n9093 Controller-Quorum,
+#                            n9094 nur lokal für Werkzeuge auf dem Docker-Host (127.0.0.1:n9094)
+# Die Listener sind unverschlüsselt (PLAINTEXT): nur für Testnetze gedacht.
+
+name: kafka-loadtest
+
+x-broker: &broker
+  image: ${KAFKA_IMAGE:-apache/kafka:4.3.1}
+  restart: unless-stopped
+
+x-broker-env: &broker-env
+  CLUSTER_ID: ${KAFKA_CLUSTER_ID:-4L6g3nShT-eMCtK--X86sw}
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${BROKER1_HOST:-broker-1}:19093,2@${BROKER2_HOST:-broker-2}:29093,3@${BROKER3_HOST:-broker-3}:39093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  KAFKA_NUM_PARTITIONS: 6
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  # Broker-seitige Stellschrauben für Rejoin-Untersuchungen
+  KAFKA_CONNECTIONS_MAX_IDLE_MS: ${KAFKA_CONNECTIONS_MAX_IDLE_MS:-600000}
+  KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS: ${KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS:-6000}
+  KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS: ${KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS:-1800000}
+
+x-client: &client
+  restart: unless-stopped
+  volumes:
+    - ./scenarios:/work/scenarios:ro
+    - ./settings:/work/settings:ro
+
+# Jede Option des Lasttests lässt sich als KLT_<NAME> setzen; 0 bei Dauer und Anzahl
+# heißt unbegrenzt, damit die Container als Daemon laufen, auch wenn das Scenario
+# eine Laufzeit vorgibt.
+x-client-env: &client-env
+  KLT_BOOTSTRAP_SERVERS: ${KLT_BOOTSTRAP_SERVERS:-${BROKER1_HOST:-broker-1}:19092,${BROKER2_HOST:-broker-2}:29092,${BROKER3_HOST:-broker-3}:39092}
+  KLT_DURATION: ${KLT_DURATION:-0}
+  KLT_COUNT: ${KLT_COUNT:-0}
+  KLT_REPORT_INTERVAL: ${KLT_REPORT_INTERVAL:-10}
+
+services:
+
+  broker-1:
+    <<: *broker
+    profiles: [kafka, broker-1, all]
+    hostname: broker-1
+    ports:
+      - "19092:19092"
+      - "19093:19093"
+      - "127.0.0.1:19094:19094"
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:19093,HOST://:19094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER1_HOST:-broker-1}:19092,HOST://127.0.0.1:19094
+    volumes:
+      - broker-1-data:/var/lib/kafka/data
+
+  broker-2:
+    <<: *broker
+    profiles: [kafka, broker-2, all]
+    hostname: broker-2
+    ports:
+      - "29092:29092"
+      - "29093:29093"
+      - "127.0.0.1:29094:29094"
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093,HOST://:29094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER2_HOST:-broker-2}:29092,HOST://127.0.0.1:29094
+    volumes:
+      - broker-2-data:/var/lib/kafka/data
+
+  broker-3:
+    <<: *broker
+    profiles: [kafka, broker-3, all]
+    hostname: broker-3
+    ports:
+      - "39092:39092"
+      - "39093:39093"
+      - "127.0.0.1:39094:39094"
+    environment:
+      <<: *broker-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: PLAINTEXT://:39092,CONTROLLER://:39093,HOST://:39094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${BROKER3_HOST:-broker-3}:39092,HOST://127.0.0.1:39094
+    volumes:
+      - broker-3-data:/var/lib/kafka/data
+
+  # Python-Variante (confluent-kafka / librdkafka); das Image wird hier gebaut.
+  python:
+    <<: *client
+    profiles: [python, clients, all]
+    image: ${KLT_PYTHON_IMAGE:-kafka-loadtest-python:latest}
+    build: ./python
+    environment:
+      <<: *client-env
+      KLT_SCENARIO: /work/scenarios/${KLT_PYTHON_SCENARIO:-${KLT_SCENARIO:-01-baseline.yaml}}
+      KLT_TOPIC: ${KLT_PYTHON_TOPIC:-loadtest-python}
+      KLT_GROUP_ID: ${KLT_PYTHON_GROUP_ID:-klt-python}
+
+  # Spring-Boot-Variante; Image vorher bauen: mvn -pl spring-boot -am package -Pimage
+  spring:
+    <<: *client
+    profiles: [spring, clients, all]
+    image: ${KLT_SPRING_IMAGE:-kafka-loadtest-spring:latest}
+    environment:
+      <<: *client-env
+      KLT_SCENARIO: /work/scenarios/${KLT_SPRING_SCENARIO:-${KLT_SCENARIO:-01-baseline.yaml}}
+      KLT_TOPIC: ${KLT_SPRING_TOPIC:-loadtest-spring}
+      KLT_GROUP_ID: ${KLT_SPRING_GROUP_ID:-klt-spring}
+
+  # Quarkus-Variante als Native Image; Image vorher bauen: mvn -pl quarkus -am package -Pnative
+  quarkus:
+    <<: *client
+    profiles: [quarkus, clients, all]
+    image: ${KLT_QUARKUS_IMAGE:-kafka-loadtest-quarkus:latest}
+    environment:
+      <<: *client-env
+      KLT_SCENARIO: /work/scenarios/${KLT_QUARKUS_SCENARIO:-${KLT_SCENARIO:-01-baseline.yaml}}
+      KLT_TOPIC: ${KLT_QUARKUS_TOPIC:-loadtest-quarkus}
+      KLT_GROUP_ID: ${KLT_QUARKUS_GROUP_ID:-klt-quarkus}
+
+volumes:
+  broker-1-data:
+  broker-2-data:
+  broker-3-data:

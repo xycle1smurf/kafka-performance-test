@@ -1,0 +1,1 @@
+{"orderId": "4711", "status": "NEW", "source": "kafka-loadtest", "items": [{"sku": "A-100", "qty": 2}, {"sku": "B-200", "qty": 1}]}

@@ -1,0 +1,36 @@
+# Referenz-Scenario: Producer + Consumer mit Standardwerten.
+# Zeigt alle verfügbaren Schlüssel. Jede Option der Kommandozeile übersteuert
+# den gleichnamigen Wert hier (z. B. --bootstrap-servers, --topic, --duration).
+#
+# Dateien (message-file, headers, settings) lassen sich auf drei Arten angeben:
+#   filename: <pfad>            relativ zu diesem Scenario-File
+#   content: |                  Inhalt direkt als Pipe-Block
+#   content-base64: <base64>    Inhalt Base64-kodiert
+# headers und settings dürfen außerdem direkt als Mapping dastehen.
+
+bootstrap-servers: localhost:9092   # übersteuert bootstrap.servers beider Clients
+topic: loadtest
+duration: 60s                       # 90 | 90s | 5m | 1h; ohne Angabe bis Strg+C
+# count: 100000                     # alternativ: nach N Nachrichten beenden
+report-interval: 5                  # Sekunden zwischen Statuszeilen
+drain-timeout: 10                   # so lange liest der Consumer nach Producer-Ende noch nach
+
+producer:
+  instances: 1                      # Anzahl Producer-Threads
+  think-time-ms: 10                 # Pause zwischen zwei Nachrichten
+  message-size: 1K                  # Bytes oder Suffix K/M
+  random-message-size: false        # true: je Nachricht 1 Byte .. message-size
+  # message-file:                   # ohne message-file: zufälliger ASCII-Inhalt
+  #   filename: ../settings/message.json
+  headers:
+    filename: ../settings/headers.yaml
+  settings:
+    filename: ../settings/producer.yaml
+
+consumer:
+  instances: 1                      # Anzahl Consumer-Threads in derselben Gruppe
+  poll-timeout-ms: 1000             # maximale Blockierzeit eines poll
+  poll-interval-ms: 0               # Pause zwischen zwei polls
+  process-time-ms: 0                # simulierte Verarbeitungszeit je Nachricht
+  settings:
+    filename: ../settings/consumer.yaml

@@ -1,0 +1,19 @@
+# Nur Producer (kein consumer-Abschnitt): erzeugt Last für den echten Consumer.
+# Nachricht aus Datei, auf 4 KB aufgefüllt; Settings Base64-kodiert
+# (acks: all, linger.ms: 5, compression.type: lz4).
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+count: 50000
+
+producer:
+  instances: 4
+  think-time-ms: 1
+  message-size: 4K
+  message-file:
+    filename: ../settings/message.json
+  headers:                          # Header direkt als Mapping
+    content-type: application/json
+    scenario: producer-only
+  settings:
+    content-base64: YWNrczogYWxsCmxpbmdlci5tczogNQpjb21wcmVzc2lvbi50eXBlOiBsejQK

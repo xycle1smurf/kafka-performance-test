@@ -1,0 +1,18 @@
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"
+    log-startup-info: false
+
+logging:
+  # Der Lasttest schreibt beim Beenden noch seinen Abschlussbericht
+  register-shutdown-hook: false
+  pattern:
+    console: "%d{HH:mm:ss} %-5level %msg%n"
+  level:
+    root: WARN
+    kafka-loadtest: INFO
+    # Gruppen-Koordination sichtbar lassen: hier steht der Grund jedes Rejoins
+    org.apache.kafka.clients.consumer.internals: INFO
+    org.apache.kafka.clients.consumer.internals.SubscriptionState: WARN
+    org.apache.kafka.clients.consumer.internals.ConsumerUtils: WARN

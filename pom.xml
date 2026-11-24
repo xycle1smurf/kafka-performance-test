@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>loadtest.kafka</groupId>
+  <artifactId>kafka-loadtest-parent</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <name>kafka-loadtest</name>
+
+  <modules>
+    <module>core</module>
+    <module>spring-boot</module>
+    <module>quarkus</module>
+  </modules>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <spring-boot.version>4.2.0</spring-boot.version>
+    <quarkus.platform.version>3.40.1</quarkus.platform.version>
+    <jib.version>3.5.2</jib.version>
+    <!-- Nur zum Kompilieren von core; zur Laufzeit gilt die Version des jeweiligen Frameworks. -->
+    <kafka-clients.version>4.0.0</kafka-clients.version>
+    <slf4j.version>2.0.17</slf4j.version>
+    <snakeyaml.version>2.4</snakeyaml.version>
+  </properties>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>3.14.0</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

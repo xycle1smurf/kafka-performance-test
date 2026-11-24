@@ -1,0 +1,3 @@
+confluent-kafka>=2.5
+PyYAML>=6.0
+vyper-config>=1.2

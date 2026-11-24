@@ -1,0 +1,37 @@
+# Empfohlene Einstellungen für eine wackelige WAN-/Firewall-Strecke, über
+# längere Zeit mit wenig Last gefahren. Bleibt "rebal" in den Statuszeilen bei 0,
+# sind die Werte für diesen Standort tragfähig.
+# Vergleichslauf: session.timeout.ms auf 10000 und connections.max.idle.ms
+# entfernen, um das bisherige Verhalten nachzustellen.
+
+bootstrap-servers: localhost:9092
+topic: loadtest
+duration: 30m
+report-interval: 30
+
+producer:
+  think-time-ms: 5000               # wenig Verkehr: Idle-Timeouts der Firewall werden sichtbar
+  message-file:
+    content-base64: eyJvcmRlcklkIjogIjQ3MTEiLCAic3RhdHVzIjogIk5FVyIsICJzb3VyY2UiOiAia2Fma2EtbG9hZHRlc3QifQ==
+  settings:
+    acks: all
+    enable.idempotence: true
+    socket.keepalive.enable: true
+    connections.max.idle.ms: 180000
+    request.timeout.ms: 40000
+    delivery.timeout.ms: 120000
+    reconnect.backoff.ms: 250
+    reconnect.backoff.max.ms: 10000
+
+consumer:
+  instances: 3
+  poll-timeout-ms: 1000
+  settings:
+    group.id: loadtest-wan
+    session.timeout.ms: 60000
+    heartbeat.interval.ms: 15000
+    max.poll.interval.ms: 600000
+    partition.assignment.strategy: cooperative-sticky
+    socket.keepalive.enable: true
+    connections.max.idle.ms: 180000
+    # group.instance.id: loadtest-1 # Static Membership; nur mit instances: 1 (ID muss eindeutig sein)

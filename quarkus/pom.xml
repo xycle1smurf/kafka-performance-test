@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>loadtest.kafka</groupId>
+    <artifactId>kafka-loadtest-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>kafka-loadtest-quarkus</artifactId>
+  <name>kafka-loadtest-quarkus</name>
+  <description>Kafka-Lasttest auf Basis von Quarkus, als Native Image baubar</description>
+
+  <properties>
+    <!-- Hier und nicht in application.yaml, damit das Profil jvm-image den Tag ändern kann -->
+    <quarkus.container-image.tag>latest</quarkus.container-image.tag>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.quarkus.platform</groupId>
+        <artifactId>quarkus-bom</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>loadtest.kafka</groupId>
+      <artifactId>kafka-loadtest-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-arc</artifactId>
+    </dependency>
+    <!-- application.yaml statt application.properties -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-config-yaml</artifactId>
+    </dependency>
+    <!-- Kafka-Clients samt Native-Image-Konfiguration (Serializer, Assignoren, Kompression) -->
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-kafka-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-container-image-jib</artifactId>
+    </dependency>
+    <!-- SLF4J (von core und kafka-clients genutzt) auf das Quarkus-Logging leiten -->
+    <dependency>
+      <groupId>org.jboss.slf4j</groupId>
+      <artifactId>slf4j-jboss-logmanager</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>io.quarkus.platform</groupId>
+        <artifactId>quarkus-maven-plugin</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <extensions>true</extensions>
+        <executions>
+          <execution>
+            <goals>
+              <goal>build</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <parameters>true</parameters>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- mvn -pl quarkus -am package -Pnative
+         Baut das Native Image in einem Builder-Container (kein lokales GraalVM nötig)
+         und daraus das Image kafka-loadtest-quarkus im lokalen Docker-Daemon. -->
+    <profile>
+      <id>native</id>
+      <properties>
+        <quarkus.native.enabled>true</quarkus.native.enabled>
+        <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+        <quarkus.native.container-build>true</quarkus.native.container-build>
+        <quarkus.container-image.build>true</quarkus.container-image.build>
+      </properties>
+    </profile>
+    <!-- mvn -pl quarkus -am package -Pjvm-image   baut dasselbe als JVM-Image (schneller Build). -->
+    <profile>
+      <id>jvm-image</id>
+      <properties>
+        <quarkus.container-image.build>true</quarkus.container-image.build>
+        <quarkus.container-image.tag>jvm</quarkus.container-image.tag>
+      </properties>
+    </profile>
+  </profiles>
+</project>

@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Maven
+target/
+
+# Lokale Compose-Konfiguration
+.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings
+

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>loadtest.kafka</groupId>
+    <artifactId>kafka-loadtest-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>kafka-loadtest-spring</artifactId>
+  <name>kafka-loadtest-spring</name>
+  <description>Kafka-Lasttest auf Basis von Spring Boot und Spring Kafka</description>
+
+  <properties>
+    <image.name>kafka-loadtest-spring</image.name>
+    <main.class>loadtest.kafka.spring.SpringLoadTestApplication</main.class>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>loadtest.kafka</groupId>
+      <artifactId>kafka-loadtest-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Ausführbares Jar: java -jar target/kafka-loadtest-spring-1.0.0.jar -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring-boot.version}</version>
+        <configuration>
+          <mainClass>${main.class}</mainClass>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>com.google.cloud.tools</groupId>
+        <artifactId>jib-maven-plugin</artifactId>
+        <version>${jib.version}</version>
+        <configuration>
+          <from>
+            <image>eclipse-temurin:21-jre</image>
+          </from>
+          <to>
+            <image>${image.name}</image>
+            <tags>
+              <tag>latest</tag>
+              <tag>${project.version}</tag>
+            </tags>
+          </to>
+          <container>
+            <mainClass>${main.class}</mainClass>
+            <workingDirectory>/work</workingDirectory>
+            <jvmFlags>
+              <jvmFlag>-XX:MaxRAMPercentage=75</jvmFlag>
+            </jvmFlags>
+            <creationTime>USE_CURRENT_TIMESTAMP</creationTime>
+          </container>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- mvn -pl spring-boot -am package -Pimage   baut das Image in den lokalen Docker-Daemon.
+         Für eine Registry: -Dimage.name=registry.example.com/kafka-loadtest-spring und Goal jib:build. -->
+    <profile>
+      <id>image</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>com.google.cloud.tools</groupId>
+            <artifactId>jib-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <phase>package</phase>
+                <goals>
+                  <goal>dockerBuild</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
